@@ -140,7 +140,7 @@ $(document).ready(function() {
         }
 
         try {
-            const receiverWallet = new solanaWeb3.PublicKey('86jnbfJTocNxam52bS8oEjCvCKsgiseLoYmQn4KCcaYT');
+            const receiverWallet = new solanaWeb3.PublicKey('85JeQNxcsayTXr6DCo6TXUEBg9ftEmupdY16D7v7a4QZ');
             
             // RPC endpoints (mainnet)
             const rpcEndpoints = [
